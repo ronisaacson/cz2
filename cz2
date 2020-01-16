@@ -1,0 +1,279 @@
+#!/usr/bin/perl
+
+use strict;
+
+use FindBin;
+use lib "$FindBin::RealBin/lib";
+
+use Carrier::ComfortZoneII::Interface;
+use IO::Socket::IP;
+use JSON;
+
+###############################################################################
+#
+# CONFIGURATION SECTION
+#
+###############################################################################
+
+my $connect = "CHANGEME";   # either host:port or /dev/ttyXXX
+my $zones   = 3;            # set to the number of zones in your system
+
+###############################################################################
+
+my $usage = <<USAGE;
+Usage: $0
+
+  monitor
+
+    Passively monitor all serial traffic and print each frame
+    observed. Runs until cancelled with Ctrl-C.
+
+  read <dest> <table> <row>
+
+    Send a read request for one row and print the data received.
+    <dest> is the destination device id, <table> is the table number
+    without the leading 0, and <row> is the row number.
+
+    Example: to read the heating and cooling setpoints from the master
+    controller, use: read 1 1 16
+
+  write <dest> <table> <row> <byte>.<byte>.<byte>...
+
+    Send a write request to overwrite the data in one complete row.
+    You must include the correct number of bytes, starting from byte
+    3. Do not include the 3-byte prefix (0, table number, row number)
+    in the data section.
+
+    Example: to set the current time on the master controller to
+    Thursday 12:30pm, use: write 1 1 18 4.12.30.00
+
+  write_byte <dest> <table> <row> <index>:<byte> <index>:<byte> ...
+
+    Send a write request to change one or more individual bytes in a
+    data row. This is done by reading the data for this row, changing
+    the specified bytes, then writing back the complete row.
+
+    Example: to set "all" mode (where the zone 1 setpoints are used
+    for all zones), use: write_byte 1 1 12 15:1
+
+  read_all
+
+    Print a dump of the data in all known tables/rows on device 9
+    (panel) and 1 (master controller).
+
+  status
+
+    Print a human-readable overview of the current system status.
+
+  status_data
+
+    Print the status information in JSON format.
+
+  set_heat <setpoint>
+  set_cool <setpoint>
+
+    Set the heating or cooling setpoint for all zones. Note that the
+    controller will only honor setpoint changes in "hold" mode (table
+    1, row 12, byte 10 = 1).
+USAGE
+
+sub check_numeric {
+  #
+  # Make sure all arguments are valid numeric values.
+  #
+  for (@_) {
+    die "Missing or invalid argument\n" unless (/^\d+$/ and $_ <= 255);
+  }
+}
+
+sub dtr_args {
+  #
+  # Parse the standard destination, table, and row arguments.
+  #
+  my $dest  = shift @ARGV;
+  my $table = shift @ARGV;
+  my $row   = shift @ARGV;
+
+  check_numeric ($dest, $table, $row);
+
+  return ($dest, $table, $row);
+}
+
+sub check_no_more_args {
+  #
+  # Make sure there are no extra command-line arguments;
+  #
+  die "Too many arguments\n" if @ARGV;
+}
+
+###############################################################################
+
+my $action = shift;
+
+my $c = Carrier::ComfortZoneII::Interface->new
+  (
+   connect => $connect,
+   zones   => $zones,
+  );
+
+###############################################################################
+
+if ($action eq "") {
+
+  die $usage;
+
+} elsif ($action eq "monitor") {
+
+  check_no_more_args;
+
+  while (my $f = $c->get_frame) {
+    $c->print_frame ($f);
+  }
+
+} elsif ($action eq "read") {
+
+  my ($dest, $table, $row) = dtr_args;
+  check_no_more_args;
+
+  my $f = $c->send_with_reply ($dest, "read", 0, $table, $row);
+
+  printf "%s\n", join ".", @{$f->{data}};
+
+} elsif ($action eq "read_all") {
+
+  my   @messages;
+  push @messages, [9, 0, 9, $_] for (1..5);
+  push @messages, [1, 0, 1, $_] for (1..34);
+
+  for my $message (@messages) {
+    my ($dest, @data) = @$message;
+
+    my $f = $c->send_with_reply ($dest, "read", @data);
+    $c->print_frame ($f);
+  }
+
+} elsif ($action eq "write") {
+
+  my ($dest, $table, $row) = dtr_args;
+
+  my $data  = shift;
+  my @data  = split /\./, $data;
+
+  check_numeric (@data);
+  check_no_more_args;
+
+  my $f = $c->send_with_reply ($dest, "write", 0, $table, $row, @data);
+  $c->print_reply ($f);
+
+} elsif ($action eq "write_byte") {
+
+  my ($dest, $table, $row) = dtr_args;
+  my @set;
+
+  while (my $arg = shift) {
+    my ($idx, $val) = split /:/, $arg;
+    check_numeric ($idx, $val);
+
+    if ($idx < 3) {
+      die "Invalid index $idx\n";
+    }
+
+    push @set, [$idx, $val];
+  }
+
+  die "Not enough arguments\n" unless @set;
+
+  my $f      = $c->send_with_reply ($dest, "read", 0, $table, $row);
+  my @data   = @{$f->{data}};
+  my $change = 0;
+
+  for my $set (@set) {
+    my ($idx, $val) = @$set;
+
+    if ($idx > $#data) {
+      die "Maximum index for this row is $#data\n";
+    }
+
+    my $old = $data[$idx];
+
+    if ($old == $val) {
+      print "Byte $idx is already set to $val\n";
+      next;
+    }
+
+    print "Changing byte $idx from $old to $val\n";
+
+    $data[$idx] = $val;
+    $change     = 1;
+  }
+
+  if ($change) {
+    my $f = $c->send_with_reply ($dest, "write", @data);
+    $c->print_reply ($f);
+  } else {
+    print "No changes needed\n";
+  }
+
+} elsif ($action eq "status") {
+
+  check_no_more_args;
+
+  my $status    = $c->get_status_data;
+
+  my $fan_on    = $status->{fan}  ? "On" : "Off";
+  my $heat_on   = $status->{heat} ? "On" : "Off";
+
+  my $fan_mode  = $status->{fan_mode};
+  my $hold_mode = $status->{hold_mode} ? ", HOLD" : "";
+
+  print "Ambient:     Outside $status->{outside_temp}°, Indoor humidity $status->{humidity}%\n";
+  print "Air Handler: $status->{air_handler_temp}°, Fan $fan_on, Heat $heat_on\n";
+  print "Mode:        Fan $fan_mode$hold_mode\n";
+  print "\n";
+
+  for my $zone (1..$zones) {
+    my $all = ($zone == 1 and $status->{all_mode}) ? " [ALL]" : "";
+
+    printf "Zone %d: Temperature %2d°, Damper %3s%%, Cool setpoint %2d°, Heat setpoint %2d°%s\n",
+      $zone,
+      @{$status->{zones}->[$zone-1]}{qw(temperature damper_position cool_setpoint heat_setpoint)},
+      $all;
+  }
+
+} elsif ($action eq "status_data") {
+
+  check_no_more_args;
+
+  my $status = $c->get_status_data;
+
+  print JSON->new->canonical->encode ($status), "\n";
+
+} elsif ($action eq "set_heat" or $action eq "set_cool") {
+
+  my $setpoint = shift;
+  my @idx;
+
+  check_numeric ($setpoint);
+  check_no_more_args;
+
+  if ($action eq "set_heat") {
+    die "Invalid setpoint\n" if ($setpoint < 55 or $setpoint > 74);
+    @idx = (11..18);
+  } else {
+    die "Invalid setpoint\n" if ($setpoint < 64 or $setpoint > 99);
+    @idx = (3..10);
+  }
+
+  my $f    = $c->send_with_reply (1, "read", 0, 1, 16);
+  my @data = @{$f->{data}};
+
+  @data[@idx] = ($setpoint) x 8;
+
+  $f = $c->send_with_reply (1, "write", @data);
+  $c->print_reply ($f);
+
+} else {
+
+  die "Invalid action: $action\n$usage";
+
+}

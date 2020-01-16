@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+use strict;
+use IO::File;
+
+# Usage: czdiff a1 a2 a3 . b1 b2
+#
+# Shows fields where all of the As are the same, and all of the Bs are
+# the same, but A != B.
+#
+# Many of the data fields are based on ambient conditions and are
+# constantly changing. To figure out which byte corresponds to a
+# certain feature on the controller, do something like:
+#
+#   cz2 read_all > a1
+#   cz2 read_all > a2
+#   cz2 read_all > a3   (do this a few times over a period of time)
+#
+#   Make the change on the controller
+#
+#   cz2 read_all > b1
+#   cz2 read_all > b2   (etc.)
+#
+# Then use this script to isolate the bytes that might correspond with
+# that change.
+
+my @files = ([], []);
+my $group = 0;
+
+while (my $file = shift) {
+  if ($file eq ".") {
+    $group = 1;
+  } else {
+    my $handle = IO::File->new ($file) or die "Error reading $file: $!\n";
+    push @{$files[$group]}, $handle;
+  }
+}
+
+while (1) {
+  my $table;
+  my @fields = ([], []);
+
+  for my $group (0..1) {
+    for my $handle (@{$files[$group]}) {
+      chomp (my $line = <$handle>) or exit;
+      my @line = split /\./, substr $line, 17;
+
+      $table ||= join ".", @line[0..2];
+      push @{$fields[$group]}, [@line];
+    }
+  }
+
+  my $count = $#{$fields[0]->[0]};
+
+  for my $field (0..$count) {
+    my @value = (undef, undef);
+
+    for my $group (0..1) {
+      for my $file (@{$fields[$group]}) {
+        my $value = $file->[$field];
+
+        if (defined $value[$group]) {
+          if ($value == $value[$group]) {
+            next;
+          } else {
+            $value[$group] = -1;
+            last;
+          }
+        } else {
+          $value[$group] = $value;
+        }
+      }
+    }
+
+    if ($value[0] >= 0 and $value[1] >= 0 and $value[0] != $value[1]) {
+      printf "%-6s byte %2d: %3d %3d\n", $table, $field, $value[0], $value[1];
+    }
+  }
+}
