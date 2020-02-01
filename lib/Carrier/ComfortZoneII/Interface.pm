@@ -16,8 +16,6 @@ our $MAX_MESSAGE_SIZE = $PROTOCOL_SIZE + 255;
 our $FRAME_TESTER = Carrier::ComfortZoneII::FrameParser::frame_tester;
 our $FRAME_PARSER = Carrier::ComfortZoneII::FrameParser::frame_parser;
 
-our $MY_ID = 11;
-
 ###############################################################################
 
 sub new {
@@ -35,8 +33,9 @@ sub new {
      validate
        (@_,
         {
-         connect => { type => SCALAR },
-         zones   => { type => SCALAR, regex => qr/^[1-8]$/ },
+         connect => 1,
+         zones   => { type => SCALAR, regex => qr/^[1-8]$/               },
+         id      => { type => SCALAR, regex => qr/^\d+$/,  default => 99 },
         })
     };
 
@@ -59,7 +58,11 @@ sub fh {
 
   my $connect = $self->{connect};
 
-  if ($connect =~ /:/) {
+  if (ref $connect) {
+
+    $self->{fh} = $connect;
+
+  } elsif ($connect =~ /:/) {
 
     my ($host, $port) = split /:/, $connect;
     $self->{fh} = IO::Socket::IP->new
@@ -163,7 +166,7 @@ sub get_reply_frame {
   for (1..5) {
     my $f = $self->get_frame;
 
-    next unless ($f->{destination} == $MY_ID);
+    next unless ($f->{destination} == $self->{id});
 
     if ($f->{function} eq "error") {
       return $f;
@@ -237,7 +240,7 @@ sub make_message {
   my @bytes =
     (
      $destination, 0,  # Destination
-     $MY_ID,       0,  # Source
+     $self->{id},  0,  # Source
      scalar (@data),   # Data length
      0, 0,             # Reserved
      $function_code,   # Function
