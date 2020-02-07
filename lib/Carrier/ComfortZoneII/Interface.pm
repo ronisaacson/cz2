@@ -16,6 +16,15 @@ our $MAX_MESSAGE_SIZE = $PROTOCOL_SIZE + 255;
 our $FRAME_TESTER = Carrier::ComfortZoneII::FrameParser::frame_tester;
 our $FRAME_PARSER = Carrier::ComfortZoneII::FrameParser::frame_parser;
 
+our %SYSTEM_MODE =
+  (
+   0 => "Heat",
+   1 => "Cool",
+   2 => "Auto",
+   3 => "E Heat",
+   4 => "Off",
+  );
+
 ###############################################################################
 
 sub new {
@@ -309,26 +318,35 @@ sub get_status_data {
   my $status = { time => time };
   my @zones;
 
+  $status->{system_mode}      = $SYSTEM_MODE{$data{"1.12"}->[4]};
+  $status->{effective_mode}   = $SYSTEM_MODE{$data{"1.12"}->[6]};
   $status->{outside_temp}     = $self->decode_temperature ($data{"9.3"}->[4], $data{"9.3"}->[5]);
   $status->{air_handler_temp} =  $data{"9.3"} ->[6];
   $status->{fan}              = ($data{"9.5"} ->[3]  & 0x20) ? 1 : 0;
   $status->{heat}             = ($data{"9.5"} ->[3]  & 0x01) ? 1 : 0;
   $status->{humidity}         =  $data{"1.6"} ->[7];
-  $status->{hold_mode}        = ($data{"1.12"}->[10] == 1)   ? 1 : 0;
   $status->{all_mode}         =  $data{"1.12"}->[15];
   $status->{fan_mode}         = ($data{"1.17"}->[3]  & 0x04) ? "Always On" : "Auto";
 
   for my $zone (0..$self->{zones}-1) {
+    my $bit = 1 << $zone;
+
     $zones[$zone]->{damper_position} = sprintf "%d", 100 * ($data{"9.4"}->[$zone+3] / 15);
     $zones[$zone]->{cool_setpoint}   = $data{"1.16"}->[$zone+3];
     $zones[$zone]->{heat_setpoint}   = $data{"1.16"}->[$zone+11];
     $zones[$zone]->{temperature}     = $data{"1.24"}->[$zone+3];
+    $zones[$zone]->{temporary}       = $data{"1.12"}->[9]  & $bit;
+    $zones[$zone]->{hold}            = $data{"1.12"}->[10] & $bit;
+    $zones[$zone]->{out}             = $data{"1.12"}->[12] & $bit;
   }
 
   if ($status->{all_mode}) {
     for my $zone (1..$self->{zones}-1) {
       $zones[$zone]->{cool_setpoint} = $zones[0]->{cool_setpoint};
       $zones[$zone]->{heat_setpoint} = $zones[0]->{heat_setpoint};
+      $zones[$zone]->{temporary}     = $zones[0]->{temporary};
+      $zones[$zone]->{hold}          = $zones[0]->{hold};
+      $zones[$zone]->{out}           = $zones[0]->{out};
     }
   }
 

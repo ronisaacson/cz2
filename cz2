@@ -23,6 +23,56 @@ my $zones   = 3;            # set to the number of zones in your system
 my $usage = <<USAGE;
 Usage: $0
 
+HIGH-LEVEL COMMANDS
+
+  set_system <option>...
+
+    Set system-wide options. The options are one or more key=value
+    pairs from the table below. Example: set_system mode=auto
+
+    Key   Values
+    ----  ----------------------------
+    mode  heat, cool, auto, eheat, off
+    fan   auto, always_on
+    all   on, off
+
+    If ALL mode is enabled, the zone 1 settings will apply to all
+    zones and the settings for the other zones will be ignored.
+
+  set_zone <"all"/zone/list/range> <option>...
+
+    Set zone options. The first parameter can be "all", a zone number,
+    a comma-separated list (1,3,5), or a range (1-3). The options are
+    one or more key=value pairs from the table below.
+
+    Key   Values    Description
+    ----  --------  ---------------------------------
+    heat  <number>  Sets the heating setpoint
+    cool  <number>  Sets the cooling setpoint
+    temp  on, off   Enables "temporary setpoint" mode
+    hold  on, off   Enables HOLD mode
+    out   on, off   Enables OUT mode
+
+    In temporary setpoint mode, the zone will keep the current
+    setpoint until the next scheduled change, and then automatically
+    resume the pre-programmed schedule. In HOLD mode, the zone will
+    ignore all scheduled changes and keep the current setpoint
+    forever.
+
+    To change setpoints, you must enable either temporary setpoint
+    mode or HOLD mode. Otherwise the controller will quickly revert to
+    the currently scheduled program.
+
+    Keep in mind that if ALL mode is enabled, the zone 1 settings will
+    apply to all zones and the settings for the other zones will be
+    ignored.
+
+  status
+
+    Print an overview of the current system status.
+
+LOW-LEVEL COMMANDS
+
   monitor
 
     Passively monitor all serial traffic and print each frame
@@ -56,25 +106,20 @@ Usage: $0
     Example: to set "all" mode (where the zone 1 setpoints are used
     for all zones), use: write_byte 1 1 12 15:1
 
-  read_all
+  read_all [<dest> <table>]
 
-    Print a dump of the data in all known tables/rows on device 9
-    (panel) and 1 (master controller).
+    Print a dump of the data in all known rows in the given table on
+    the specified destination device. Valid combinations are:
 
-  status
+      9  9 - Panel settings and data
+      1  1 - Master controller settings and data
+      1 10 - Master controller schedules
 
-    Print a human-readable overview of the current system status.
+    With no arguments, print a dump of the data in all of these.
 
   status_data
 
     Print the status information in JSON format.
-
-  set_heat <setpoint>
-  set_cool <setpoint>
-
-    Set the heating or cooling setpoint for all zones. Note that the
-    controller will only honor setpoint changes in "hold" mode (table
-    1, row 12, byte 10 = 1).
 USAGE
 
 sub check_numeric {
@@ -99,11 +144,104 @@ sub dtr_args {
   return ($dest, $table, $row);
 }
 
+sub kv_args {
+  #
+  # Parse key=value style arguments
+  #
+  my ($spec) = @_;
+  my $args;
+
+  while (my $arg = shift @ARGV) {
+    my ($key, $value) = split /=/, $arg, 2;
+
+    my $check = $spec->{$key}
+      or die "Invalid parameter '$key'\n";
+
+    if (ref ($check) eq "HASH") {
+
+      $value = $check->{$value};
+
+      defined ($value)
+        or die "Invalid value for parameter '$key'\n";
+
+      $args->{$key} = $value;
+
+    } elsif ($check eq "numeric") {
+
+      die "Invalid value for parameter '$key'\n"
+        unless ($value =~ /^\d+$/ and $value <= 255);
+
+      $args->{$key} = $value;
+
+    } elsif ($check eq "onoff") {
+
+      $args->{$key} =
+        $value eq "on"  ? 1 :
+        $value eq "off" ? 0 :
+        die "Invalid value for parameter '$key'\n";
+
+    } else {
+
+      die "Internal error";
+
+    }
+  }
+
+  return $args;
+}
+
 sub check_no_more_args {
   #
   # Make sure there are no extra command-line arguments;
   #
   die "Too many arguments\n" if @ARGV;
+}
+
+###############################################################################
+
+sub populate_data {
+  my ($c, $data, $table, $row) = @_;
+
+  my $key = "$table.$row";
+  return if $data->{$key};
+
+  my $f = $c->send_with_reply ($table, "read", 0, $table, $row);
+  $data->{$key} = $f->{data};
+}
+
+sub set_field {
+  my ($c, $data, $table, $row, $field, $value) = @_;
+
+  populate_data ($c, $data, $table, $row);
+  $data->{"$table.$row"}->[$field] = $value;
+}
+
+sub set_bit_field {
+  my ($c, $data, $table, $row, $field, $bit, $value) = @_;
+
+  populate_data ($c, $data, $table, $row);
+
+  my $ref  = \($data->{"$table.$row"}->[$field]);
+  my $mask = ~(1 << $bit);
+
+  $$ref &= $mask;
+  $$ref |= ($value << $bit);
+}
+
+sub write_all {
+  my ($c, $data) = @_;
+
+  for my $key (sort keys %$data) {
+    my $row  = $data->{$key};
+    my $dest = $row->[1];
+
+    my $f = $c->send_with_reply ($dest, "write", @$row);
+
+    my $reply = $f->{data}->[0];
+    unless ($reply == 0) {
+      die "Reply code $reply writing row $row\n";
+    }
+  }
 }
 
 ###############################################################################
@@ -118,7 +256,7 @@ my $c = Carrier::ComfortZoneII::Interface->new
 
 ###############################################################################
 
-if ($action eq "") {
+if ($action eq "" or $action eq "help") {
 
   die $usage;
 
@@ -141,9 +279,21 @@ if ($action eq "") {
 
 } elsif ($action eq "read_all") {
 
-  my   @messages;
-  push @messages, [9, 0, 9, $_] for (1..5);
-  push @messages, [1, 0, 1, $_] for (1..34);
+  my $dest  = shift;
+  my $table = shift;
+  my $target;
+
+  if (length $dest) {
+    check_numeric ($dest, $table);
+    check_no_more_args;
+
+    $target = "$dest.$table";
+  }
+
+  my @messages;
+  if ($target eq "9.9"  or not $target) { push @messages, [9, 0,  9, $_] for (1..5)  }
+  if ($target eq "1.1"  or not $target) { push @messages, [1, 0,  1, $_] for (1..34) }
+  if ($target eq "1.10" or not $target) { push @messages, [1, 0, 10, $_] for (1..56) }
 
   for my $message (@messages) {
     my ($dest, @data) = @$message;
@@ -223,20 +373,32 @@ if ($action eq "") {
   my $fan_on    = $status->{fan}  ? "On" : "Off";
   my $heat_on   = $status->{heat} ? "On" : "Off";
 
+  my $mode      = $status->{system_mode};
+  my $effective = $status->{effective_mode};
   my $fan_mode  = $status->{fan_mode};
-  my $hold_mode = $status->{hold_mode} ? ", HOLD" : "";
+
+  $mode .= " ($effective)" if ($mode eq "Auto");
 
   print "Ambient:     Outside $status->{outside_temp}°, Indoor humidity $status->{humidity}%\n";
   print "Air Handler: $status->{air_handler_temp}°, Fan $fan_on, Heat $heat_on\n";
-  print "Mode:        Fan $fan_mode$hold_mode\n";
+  print "Mode:        $mode, Fan $fan_mode\n";
   print "\n";
 
   for my $zone (1..$zones) {
-    my $all = ($zone == 1 and $status->{all_mode}) ? " [ALL]" : "";
+    my $zonedata = $status->{zones}->[$zone-1];
 
-    printf "Zone %d: Temperature %2d°, Damper %3s%%, Cool setpoint %2d°, Heat setpoint %2d°%s\n",
+    my $all  = ($zone == 1 and $status->{all_mode}) ? " [ALL]"  : "";
+    my $temp = $zonedata->{temporary}               ? " [TEMP]" : "";
+    my $hold = $zonedata->{hold}                    ? " [HOLD]" : "";
+
+    my $cool = $zonedata->{out} ? "OUT" : sprintf "%2d°", $zonedata->{cool_setpoint};
+    my $heat = $zonedata->{out} ? "OUT" : sprintf "%2d°", $zonedata->{heat_setpoint};
+
+    printf "Zone %d: Temperature %2d°, Damper %3s%%, Cool setpoint %s, Heat setpoint %s%s%s\n",
       $zone,
-      @{$status->{zones}->[$zone-1]}{qw(temperature damper_position cool_setpoint heat_setpoint)},
+      @{$status->{zones}->[$zone-1]}{qw(temperature damper_position)},
+      $cool, $heat,
+      $hold || $temp,
       $all;
   }
 
@@ -248,32 +410,103 @@ if ($action eq "") {
 
   print JSON->new->canonical->encode ($status), "\n";
 
-} elsif ($action eq "set_heat" or $action eq "set_cool") {
+} elsif ($action eq "set_system") {
 
-  my $setpoint = shift;
-  my @idx;
+  my $spec =
+    {
+     mode => {
+              heat      => 0,
+              cool      => 1,
+              auto      => 2,
+              eheat     => 3,
+              off       => 4,
+             },
+     fan  => {
+              auto      => 0,
+              always_on => 1,
+             },
+     all  => "onoff",
+    };
 
-  check_numeric ($setpoint);
-  check_no_more_args;
+  my $args = kv_args ($spec);
+  my $data = {};
 
-  if ($action eq "set_heat") {
-    die "Invalid setpoint\n" if ($setpoint < 55 or $setpoint > 74);
-    @idx = (11..18);
-  } else {
-    die "Invalid setpoint\n" if ($setpoint < 64 or $setpoint > 99);
-    @idx = (3..10);
+  unless (keys %$args) {
+    die "No options specified\n";
   }
 
-  my $f    = $c->send_with_reply (1, "read", 0, 1, 16);
-  my @data = @{$f->{data}};
+  while (my ($key, $value) = each %$args) {
 
-  @data[@idx] = ($setpoint) x 8;
+    if    ($key eq "mode") { set_field     ($c, $data, 1, 12,  4,    $value) }
+    elsif ($key eq "fan")  { set_bit_field ($c, $data, 1, 17,  3, 2, $value) }
+    elsif ($key eq "all")  { set_field     ($c, $data, 1, 12, 15,    $value) }
 
-  $f = $c->send_with_reply (1, "write", @data);
-  $c->print_reply ($f);
+    else  { die "Internal error" }
+
+  }
+
+  write_all ($c, $data);
+  print "Ok\n";
+
+} elsif ($action eq "set_zone") {
+
+  my $zone_arg = shift;
+  my %zones;
+
+  my @zone_specs = split /,/, $zone_arg;
+  for (@zone_specs) {
+    if ($_ eq "all") {
+      $zones{$_} = 1 for (1..$zones);
+    } elsif (/^([1-$zones])-([1-$zones])$/ and $2 >= $1) {
+      $zones{$_} = 1 for ($1..$2);
+    } elsif (/^[1-$zones]$/) {
+      $zones{$_} = 1;
+    } else {
+      die "Invalid zone $_\n";
+    }
+  }
+
+  my @zones = sort keys %zones
+    or die "No zones specified\n";
+
+  my $spec =
+    {
+     heat => "numeric",
+     cool => "numeric",
+     temp => "onoff",
+     hold => "onoff",
+     out  => "onoff",
+    };
+
+  my $args = kv_args ($spec);
+  my $data = {};
+
+  unless (keys %$args) {
+    die "No options specified\n";
+  }
+
+  for my $zone (@zones) {
+    while (my ($key, $value) = each %$args) {
+
+      if    ($key eq "heat") { die "Invalid heat setpoint for zone $zone\n" if ($value < 55 or $value > 74) }
+      if    ($key eq "cool") { die "Invalid cool setpoint for zone $zone\n" if ($value < 64 or $value > 99) }
+
+      if    ($key eq "heat") { set_field     ($c, $data, 1, 16, 10+$zone,          $value) }
+      elsif ($key eq "cool") { set_field     ($c, $data, 1, 16,  2+$zone,          $value) }
+      elsif ($key eq "temp") { set_bit_field ($c, $data, 1, 12,  9,       $zone-1, $value) }
+      elsif ($key eq "hold") { set_bit_field ($c, $data, 1, 12, 10,       $zone-1, $value) }
+      elsif ($key eq "out")  { set_bit_field ($c, $data, 1, 12, 12,       $zone-1, $value) }
+
+      else  { die "Internal error" }
+
+    }
+  }
+
+  write_all ($c, $data);
+  print "Ok\n";
 
 } else {
 
-  die "Invalid action: $action\n$usage";
+  die "Invalid action: $action\n";
 
 }

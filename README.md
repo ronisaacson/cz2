@@ -28,21 +28,22 @@ CONFIGURATION SECTION at the top.
 
 ## Usage
 
-Run `cz2` for usage information. The set of features supported is
-pretty limited right now.
+Run `cz2` for usage information. The set of features supported should
+be enough for most needs.
 
 Carrier doesn't provide documentation on the protocol used by this
 system, but several people have helped with reverse-engineering. The
 most complete reference is currently on a wiki page of the
 [CZII_to_MQTT
 project](https://github.com/jwarcd/CZII_to_MQTT/wiki/Interpreting-Data).
-More features will be added as I discover additional data fields.
+I've discovered many additional fields and have contributed the
+details to the owner of that project for inclusion in the wiki.
 
 ## Contributing
 
-If you'd like to see more features, please help figure out more of the
-fields! The `czdiff` script can help. If you send me any fields that
-you find, I'll do my best to add support.
+Most of the fields I've figured out have been using the `czdiff`
+script. I'll do my best to add more features upon request, especially
+if you can provide field-level details.
 
 You can also help by testing this script with different
 configurations. I only have remote access, so the direct serial
