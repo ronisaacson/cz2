@@ -305,7 +305,7 @@ sub get_status_data {
   #
   my ($self) = @_;
 
-  my @queries = qw(9.3 9.4 9.5 1.6 1.12 1.16 1.17 1.24);
+  my @queries = qw(9.3 9.4 9.5 1.6 1.9 1.12 1.16 1.17 1.24);
   my %data;
 
   for my $query (@queries) {
@@ -322,9 +322,11 @@ sub get_status_data {
   $status->{effective_mode}   = $SYSTEM_MODE{$data{"1.12"}->[6]};
   $status->{outside_temp}     = $self->decode_temperature ($data{"9.3"}->[4], $data{"9.3"}->[5]);
   $status->{air_handler_temp} =  $data{"9.3"} ->[6];
+  $status->{defrosting}       = ($data{"9.3"} ->[8] || $data{"9.3"}->[9]) ? 1 : 0;
   $status->{fan}              = ($data{"9.5"} ->[3]  & 0x20) ? 1 : 0;
   $status->{heat}             = ($data{"9.5"} ->[3]  & 0x01) ? 1 : 0;
-  $status->{humidity}         =  $data{"1.6"} ->[7];
+  $status->{zone1_humidity}   =  $data{"1.6"} ->[7];
+  $status->{outside_humidity} =  $data{"1.9"} ->[6];
   $status->{all_mode}         =  $data{"1.12"}->[15];
   $status->{fan_mode}         = ($data{"1.17"}->[3]  & 0x04) ? "Always On" : "Auto";
 
