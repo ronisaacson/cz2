@@ -25,6 +25,10 @@ Usage: $0
 
 HIGH-LEVEL COMMANDS
 
+  status
+
+    Print an overview of the current system status.
+
   set_system <option>...
 
     Set system-wide options. The options are one or more key=value
@@ -67,9 +71,42 @@ HIGH-LEVEL COMMANDS
     apply to all zones and the settings for the other zones will be
     ignored.
 
-  status
+  show_schedules
 
-    Print an overview of the current system status.
+    Print a chart of all of the programmed schedules, including start
+    times and setpoints.
+
+  set_schedule <"all"/zone/list/range> <"all"/day/list/range>
+               <"all"/program/list> <option>...
+
+    Program the schedules on the controller. The first parameter
+    refers to the zone and it can be "all", a zone number, a
+    comma-separated list (1,3,5), or a range (1-3).
+
+    The second parameter refers to the day of the week and it can be
+    "all", a day abbreviation (Mon), a comma-separated list
+    (Mon,Wed,Fri), or a range (Mon-Wed).
+
+    The third parameter refers to the program. Valid programs are
+    Wake, Day, Eve, and Sleep. This parameter can be "all", a program
+    name, or a comma-separated list.
+
+    The remaining parameters can be one or more of the following:
+
+      start=<time>
+      heat=<heating setpoint>
+      cool=<cooling setpoint>
+      out
+
+    The start time can be specified as either 12-hour (3:00pm) or
+    24-hour (15:00). Setting a heating or cooling setpoint will
+    disable OUT mode. Examples:
+
+                   Zone Day     Program   Options
+                   ---- ------- --------- -------------------
+      set_schedule 1    mon     eve       start=19:00 heat=68
+      set_schedule 1-3  all     day,sleep heat=64 cool=72
+      set_schedule all  mon-fri day       start=9:00am out
 
 LOW-LEVEL COMMANDS
 
@@ -146,7 +183,7 @@ sub dtr_args {
 
 sub kv_args {
   #
-  # Parse key=value style arguments
+  # Parse key=value style arguments.
   #
   my ($spec) = @_;
   my $args;
@@ -180,6 +217,32 @@ sub kv_args {
         $value eq "off" ? 0 :
         die "Invalid value for parameter '$key'\n";
 
+    } elsif ($check eq "time") {
+
+      $value =~ /^(\d?\d):(\d\d)([ap]m)?$/i
+        or die "Invalid value for parameter '$key'\n";
+
+      my $hour   = $1 + 0;
+      my $minute = $2 + 0;
+      my $ampm   = $3;
+
+      $hour += 12 if ($ampm =~ /p/i and $hour <  12);
+      $hour -= 12 if ($ampm =~ /a/i and $hour == 12);
+
+      ($hour   >= 0 and $hour   <= 23) or die "Invalid value for parameter '$key'\n";
+      ($minute >= 0 and $minute <= 59) or die "Invalid value for parameter '$key'\n";
+
+      my $arg = [$hour, $minute];
+
+      if    ($hour ==  0) { $hour  = 12; $ampm  = "am"; }
+      elsif ($hour == 12) {              $ampm  = "pm"; }
+      elsif ($hour >  12) { $hour -= 12; $ampm  = "pm"; }
+      else                {              $ampm  = "am"; }
+
+      push @$arg, sprintf "%d:%02d%s", $hour, $minute, $ampm;
+
+      $args->{$key} = $arg;
+
     } else {
 
       die "Internal error";
@@ -188,6 +251,36 @@ sub kv_args {
   }
 
   return $args;
+}
+
+sub multi_arg {
+  #
+  # Parse one "all"/list/range-type argument. The valid values should
+  # all be lowercase.
+  #
+  my ($name, $values, $allow_range) = @_;
+
+  my $arg = lc shift @ARGV
+    or die "Missing or invalid $name argument\n";
+
+  my %map = map { $values->[$_] => $_ } (0..$#{$values});
+  my $re  = join "|", sort @$values;
+  my %args;
+
+  my @specs = split /,/, $arg;
+  for (@specs) {
+    if ($_ eq "all") {
+      $args{$_} = 1 for (0..$#{$values});
+    } elsif (/^($re)-($re)$/ and $map{$2} >= $map{$1} and $allow_range) {
+      $args{$_} = 1 for ($map{$1}..$map{$2});
+    } elsif (/^($re)$/) {
+      $args{$_} = 1 for ($map{$_});
+    } else {
+      die "Invalid $name $_\n";
+    }
+  }
+
+  return map { [$_, $values->[$_]] } sort keys %args;
 }
 
 sub check_no_more_args {
@@ -200,26 +293,28 @@ sub check_no_more_args {
 ###############################################################################
 
 sub populate_data {
-  my ($c, $data, $table, $row) = @_;
+  my ($c, $data, $dest, $table, $row) = @_;
 
   my $key = "$table.$row";
-  return if $data->{$key};
+  return $data->{$key} if $data->{$key};
 
-  my $f = $c->send_with_reply ($table, "read", 0, $table, $row);
+  my $f = $c->send_with_reply ($dest, "read", 0, $table, $row);
   $data->{$key} = $f->{data};
+
+  return $data->{$key};
 }
 
 sub set_field {
-  my ($c, $data, $table, $row, $field, $value) = @_;
+  my ($c, $data, $dest, $table, $row, $field, $value) = @_;
 
-  populate_data ($c, $data, $table, $row);
+  populate_data ($c, $data, $dest, $table, $row);
   $data->{"$table.$row"}->[$field] = $value;
 }
 
 sub set_bit_field {
-  my ($c, $data, $table, $row, $field, $bit, $value) = @_;
+  my ($c, $data, $dest, $table, $row, $field, $bit, $value) = @_;
 
-  populate_data ($c, $data, $table, $row);
+  populate_data ($c, $data, $dest, $table, $row);
 
   my $ref  = \($data->{"$table.$row"}->[$field]);
   my $mask = ~(1 << $bit);
@@ -229,11 +324,10 @@ sub set_bit_field {
 }
 
 sub write_all {
-  my ($c, $data) = @_;
+  my ($c, $dest, $data) = @_;
 
   for my $key (sort keys %$data) {
-    my $row  = $data->{$key};
-    my $dest = $row->[1];
+    my $row = $data->{$key};
 
     my $f = $c->send_with_reply ($dest, "write", @$row);
 
@@ -437,37 +531,21 @@ if ($action eq "" or $action eq "help") {
 
   while (my ($key, $value) = each %$args) {
 
-    if    ($key eq "mode") { set_field     ($c, $data, 1, 12,  4,    $value) }
-    elsif ($key eq "fan")  { set_bit_field ($c, $data, 1, 17,  3, 2, $value) }
-    elsif ($key eq "all")  { set_field     ($c, $data, 1, 12, 15,    $value) }
+    if    ($key eq "mode") { set_field     ($c, $data, 1, 1, 12,  4,    $value) }
+    elsif ($key eq "fan")  { set_bit_field ($c, $data, 1, 1, 17,  3, 2, $value) }
+    elsif ($key eq "all")  { set_field     ($c, $data, 1, 1, 12, 15,    $value) }
 
     else  { die "Internal error" }
 
   }
 
-  write_all ($c, $data);
+  write_all ($c, 1, $data);
   print "Ok\n";
 
 } elsif ($action eq "set_zone") {
 
-  my $zone_arg = shift;
-  my %zones;
-
-  my @zone_specs = split /,/, $zone_arg;
-  for (@zone_specs) {
-    if ($_ eq "all") {
-      $zones{$_} = 1 for (1..$zones);
-    } elsif (/^([1-$zones])-([1-$zones])$/ and $2 >= $1) {
-      $zones{$_} = 1 for ($1..$2);
-    } elsif (/^[1-$zones]$/) {
-      $zones{$_} = 1;
-    } else {
-      die "Invalid zone $_\n";
-    }
-  }
-
-  my @zones = sort keys %zones
-    or die "No zones specified\n";
+  my @zone_args = multi_arg ("zone", [1..$zones], 1);
+  my @zones     = map { $_->[1] } @zone_args;
 
   my $spec =
     {
@@ -491,18 +569,132 @@ if ($action eq "" or $action eq "help") {
       if    ($key eq "heat") { die "Invalid heat setpoint for zone $zone\n" if ($value < 55 or $value > 74) }
       if    ($key eq "cool") { die "Invalid cool setpoint for zone $zone\n" if ($value < 64 or $value > 99) }
 
-      if    ($key eq "heat") { set_field     ($c, $data, 1, 16, 10+$zone,          $value) }
-      elsif ($key eq "cool") { set_field     ($c, $data, 1, 16,  2+$zone,          $value) }
-      elsif ($key eq "temp") { set_bit_field ($c, $data, 1, 12,  9,       $zone-1, $value) }
-      elsif ($key eq "hold") { set_bit_field ($c, $data, 1, 12, 10,       $zone-1, $value) }
-      elsif ($key eq "out")  { set_bit_field ($c, $data, 1, 12, 12,       $zone-1, $value) }
+      if    ($key eq "heat") { set_field     ($c, $data, 1, 1, 16, 10+$zone,          $value) }
+      elsif ($key eq "cool") { set_field     ($c, $data, 1, 1, 16,  2+$zone,          $value) }
+      elsif ($key eq "temp") { set_bit_field ($c, $data, 1, 1, 12,  9,       $zone-1, $value) }
+      elsif ($key eq "hold") { set_bit_field ($c, $data, 1, 1, 12, 10,       $zone-1, $value) }
+      elsif ($key eq "out")  { set_bit_field ($c, $data, 1, 1, 12, 12,       $zone-1, $value) }
 
       else  { die "Internal error" }
 
     }
   }
 
-  write_all ($c, $data);
+  write_all ($c, 1, $data);
+  print "Ok\n";
+
+} elsif ($action eq "show_schedules") {
+
+  check_no_more_args;
+
+  my $data = {};
+  for my $row (1..($zones*7)) {
+    populate_data ($c, $data, 1, 10, $row);
+  }
+
+  print "         | WAKE            | DAY             | EVE             | SLEEP\n";
+  print "Zone Day | Start Cool Heat | Start Cool Heat | Start Cool Heat | Start Cool Heat\n";
+  print "---------+-----------------+-----------------+-----------------+----------------\n";
+
+  my $format = "   %1d %s | %2d:%02d  %3s  %3s | %2d:%02d  %3s  %3s | %2d:%02d  %3s  %3s | %2d:%02d  %3s  %3s\n";
+  my @dow    = qw(Sun Mon Tue Wed Thu Fri Sat);
+
+  for my $zone (1..$zones) {
+    for my $dow (0..$#dow) {
+      my $idx = (7*($zone-1))+1 + $dow;
+      my $row = $data->{"10.$idx"};
+
+      my @fields = ($zone, $dow[$dow]);
+
+      for my $program (0..3) {
+        my $hour   = $row->[ 3+$program];
+        my $minute = $row->[ 7+$program];
+        my $heat   = $row->[11+$program];
+        my $cool   = $row->[15+$program];
+
+        if ($heat & 0x80) {
+          $heat = "OUT";
+          $cool = "OUT";
+        } else {
+          $heat .= "°";
+          $cool .= "°";
+        }
+
+        push @fields, $hour, $minute, $cool, $heat;
+      }
+
+      printf $format, @fields;
+    }
+  }
+
+} elsif ($action eq "set_schedule") {
+
+  my @zone_args    = multi_arg ("zone",    [1..$zones],                       1);
+  my @day_args     = multi_arg ("day",     [qw(sun mon tue wed thu fri sat)], 1);
+  my @program_args = multi_arg ("program", [qw(wake day eve sleep)],          0);
+
+  my $spec =
+    {
+     start => "time",
+     heat  => "numeric",
+     cool  => "numeric",
+     out   => { "" => 1 },
+    };
+
+  my $args = kv_args ($spec);
+
+  unless (keys %$args) {
+    die "No options specified\n";
+  }
+
+  if ($args->{out} and ($args->{heat} or $args->{cool})) {
+    die "You cannot set both 'out' and heating/cooling setpoints\n";
+  }
+
+  my $data  = {};
+
+  my @zones    = map { $_->[1] } @zone_args;
+  my @days     = map { $_->[0] } @day_args;
+  my @programs = map { $_->[0] } @program_args;
+
+  my %out_val =
+    (
+     0 => 196,
+     1 => 188,
+     2 => 196,
+     3 => 188,
+    );
+
+  for my $zone (@zones) {
+    for my $dow (@days) {
+      my $idx = (7*($zone-1))+1 + $dow;
+      my $row = populate_data ($c, $data, 1, 10, $idx);
+
+      for my $program (@programs) {
+        my $f_hour   =  3+$program;
+        my $f_minute =  7+$program;
+        my $f_heat   = 11+$program;
+        my $f_cool   = 15+$program;
+
+        while (my ($key, $value) = each %$args) {
+          if ($key eq "start") {
+            my ($hour, $minute) = @$value;
+
+            $row->[$f_hour]   = $hour;
+            $row->[$f_minute] = $minute;
+          }
+
+          elsif ($key eq "heat") { $row->[$f_heat]   = $value;             }
+          elsif ($key eq "cool") { $row->[$f_cool]   = $value;             }
+          elsif ($key eq "out")  { $row->[$f_heat]   = $out_val{$program}; }
+
+          else  { die "Internal error\n"; }
+        }
+      }
+    }
+  }
+
+  write_all ($c, 1, $data);
   print "Ok\n";
 
 } else {
