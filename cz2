@@ -467,6 +467,7 @@ if ($action eq "" or $action eq "help") {
   my $fan_on    = $status->{fan}  ? "On" : "Off";
   my $heat_on   = $status->{heat} ? "On" : "Off";
 
+  my $aux       = $status->{aux_heat}   ? " [AUX]"       : "";
   my $defrost   = $status->{defrosting} ? ", Defrosting" : "";
 
   my $mode      = $status->{system_mode};
@@ -475,8 +476,8 @@ if ($action eq "" or $action eq "help") {
 
   $mode .= " ($effective)" if ($mode eq "Auto");
 
-  print "Ambient:     Outside $status->{outside_temp}° / Humidity $status->{outside_humidity}%, Indoor humidity $status->{zone1_humidity}%\n";
-  print "Air Handler: $status->{air_handler_temp}°, Fan $fan_on, Heat $heat_on$defrost\n";
+  print "Ambient:     Outside $status->{outside_temp}° / Indoor humidity $status->{zone1_humidity}%\n";
+  print "Air Handler: $status->{air_handler_temp}°, Fan $fan_on, Heat $heat_on$aux$defrost\n";
   print "Mode:        $mode, Fan $fan_mode\n";
   print "\n";
 
