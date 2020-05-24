@@ -190,6 +190,11 @@ LOW-LEVEL COMMANDS
   status_data
 
     Print the status information in JSON format.
+
+  decode_raw <data>
+
+    Decode the "raw" value in the status_data output, and use it to
+    print a dump in the same format as read_all.
 USAGE
 
 sub check_numeric {
@@ -559,6 +564,17 @@ if ($action eq "" or $action eq "help") {
   my $status = $c->get_status_data;
 
   print JSON->new->canonical->encode ($status), "\n";
+
+} elsif ($action eq "decode_raw") {
+
+  my $raw = shift;
+  check_no_more_args;
+
+  my @frames = $c->decode_raw ($raw);
+
+  for my $f (@frames) {
+    $c->print_frame ($f);
+  }
 
 } elsif ($action eq "set_system") {
 

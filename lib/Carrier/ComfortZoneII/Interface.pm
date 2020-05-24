@@ -5,6 +5,7 @@ use strict;
 use Carrier::ComfortZoneII::FrameParser;
 use Digest::CRC qw(crc16);
 use IO::Socket;
+use MIME::Base64 qw(encode_base64 decode_base64);
 use Params::Validate qw(:all);
 
 ###############################################################################
@@ -315,8 +316,22 @@ sub get_status_data {
     $data{$query} = $f->{data};
   }
 
-  my $status = { time => time };
+  my @raw;
+  for my $row (sort keys %data) {
+    my @values = @{$data{$row}};
+
+    push @raw, scalar @values;
+    push @raw, @values;
+  }
+
+  my $raw = encode_base64 (pack ("C*", @raw), "");
+
   my @zones;
+  my $status =
+    {
+     time => time,
+     raw  => $raw,
+    };
 
   $status->{system_mode}      = $SYSTEM_MODE{$data{"1.12"}->[4]};
   $status->{effective_mode}   = $SYSTEM_MODE{$data{"1.12"}->[6]};
@@ -359,4 +374,32 @@ sub get_status_data {
 
   $status->{zones} = [@zones];
   return $status;
+}
+
+sub decode_raw {
+  #
+  # Turn a "raw" status_data result back into the original frames
+  #
+
+  my ($self, $raw) = @_;
+
+  my @raw = unpack ("C*", decode_base64 ($raw));
+  my @frames;
+
+  while (@raw) {
+    my $length = shift  @raw;
+    my @bytes  = splice @raw, 0, $length;
+
+    my $frame =
+      {
+       source      => $bytes[1],
+       destination => $self->{id},
+       function    => "reply",
+       data        => [@bytes],
+      };
+
+    push @frames, $frame;
+  }
+
+  return @frames;
 }
