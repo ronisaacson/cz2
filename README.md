@@ -21,10 +21,37 @@ You'll need the following non-core perl modules:
 * Data::ParseBinary
 * Digest::CRC
 * IO::Termios (only if using a local serial connection)
+* JSON
 * Params::Validate
 
-Edit the `cz2` script and change the two parameters in the
-CONFIGURATION SECTION at the top.
+## Configuration
+
+The `cz2` script has two parameters which must be configured for your
+installation. The preferred method of configuration is to create a
+file called `$HOME/.cz2` with the following syntax:
+
+    # Configuration file for cz2
+    
+    # Connection string. This should be hostname:port if you're using
+    # a TCP connection, or /dev/ttyXXX for a serial connection.
+    #
+    connect = CHANGEME
+    
+    # Zone count OR list of zone names. This can be an integer number
+    # of zones, or a comma-separated list of zone names. The zone
+    # names, if supplied, are only used for status display.
+    #
+    zones = First Floor, Second Floor, Basement
+
+The following environment variables are also available:
+
+* `CZ2_CONFIG`: Alternate path to configuration file
+* `CZ2_CONNECT`: Overrides the `connect` parameter
+* `CZ2_ZONES`: Overrides the `zones` parameter
+
+If both the `CZ2_CONNECT` and `CZ2_ZONES` environment variables are
+supplied, then the script won't attempt to read the configuration
+file.
 
 ## Usage
 

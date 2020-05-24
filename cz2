@@ -6,17 +6,50 @@ use FindBin;
 use lib "$FindBin::RealBin/lib";
 
 use Carrier::ComfortZoneII::Interface;
+use IO::File;
 use IO::Socket::IP;
 use JSON;
 
 ###############################################################################
-#
-# CONFIGURATION SECTION
-#
-###############################################################################
 
-my $connect = "CHANGEME";   # either host:port or /dev/ttyXXX
-my $zones   = 3;            # set to the number of zones in your system
+my $config  = $ENV{CZ2_CONFIG} || "$ENV{HOME}/.cz2";
+my $connect = $ENV{CZ2_CONNECT};
+my $zones   = $ENV{CZ2_ZONES};
+
+unless ($connect and $zones) {
+  my $CONFIG = IO::File->new ($config)
+    or die "Error reading $config: $!\n";
+
+  while (<$CONFIG>) {
+    chomp;
+    s/\s*#.*$//;
+    s/^\s+|\s+$//g;
+
+    next unless (length $_);
+
+    my ($var, $val) = /^(\S+)\s*=\s*(.+)$/
+      or die "Invalid configuration setting at $config line $.\n";
+
+    if    ($var eq "connect") { $connect ||= $val }
+    elsif ($var eq "zones")   { $zones   ||= $val }
+    else  { die "Invalid parameter '$var' at $config line $.\n"; }
+  }
+}
+
+my $zone_count;
+my @zone_names;
+
+if ($zones =~ /^\d+$/) {
+
+  $zone_count = $zones;
+  @zone_names = map { "Zone $_" } (1..$zone_count);
+
+} else {
+
+  my @zones   = split /\s*,\s*/, $zones;
+  $zone_count = scalar @zones;
+  @zone_names = map { "$_. $zones[$_-1]" } (1..$zone_count);
+}
 
 ###############################################################################
 
@@ -345,7 +378,7 @@ my $action = shift;
 my $c = Carrier::ComfortZoneII::Interface->new
   (
    connect => $connect,
-   zones   => $zones,
+   zones   => $zone_count,
   );
 
 ###############################################################################
@@ -481,7 +514,9 @@ if ($action eq "" or $action eq "help") {
   print "Mode:        $mode, Fan $fan_mode\n";
   print "\n";
 
-  for my $zone (1..$zones) {
+  my $name_len = (sort { $a <=> $b } map { length $_ } @zone_names)[-1] + 1;
+
+  for my $zone (1..$zone_count) {
     my $zonedata = $status->{zones}->[$zone-1];
 
     my $all  = ($zone == 1 and $status->{all_mode}) ? " [ALL]"  : "";
@@ -491,8 +526,8 @@ if ($action eq "" or $action eq "help") {
     my $cool = $zonedata->{out} ? "OUT" : sprintf "%2d°", $zonedata->{cool_setpoint};
     my $heat = $zonedata->{out} ? "OUT" : sprintf "%2d°", $zonedata->{heat_setpoint};
 
-    printf "Zone %d: Temperature %2d°, Damper %3s%%, Cool setpoint %s, Heat setpoint %s%s%s\n",
-      $zone,
+    printf "%-${name_len}s Temperature %2d°, Damper %3s%%, Cool setpoint %s, Heat setpoint %s%s%s\n",
+      $zone_names[$zone-1] . ":",
       @{$status->{zones}->[$zone-1]}{qw(temperature damper_position)},
       $cool, $heat,
       $hold || $temp,
@@ -547,7 +582,7 @@ if ($action eq "" or $action eq "help") {
 
 } elsif ($action eq "set_zone") {
 
-  my @zone_args = multi_arg ("zone", [1..$zones], 1);
+  my @zone_args = multi_arg ("zone", [1..$zone_count], 1);
   my @zones     = map { $_->[1] } @zone_args;
 
   my $spec =
@@ -591,7 +626,7 @@ if ($action eq "" or $action eq "help") {
   check_no_more_args;
 
   my $data = {};
-  for my $row (1..($zones*7)) {
+  for my $row (1..($zone_count*7)) {
     populate_data ($c, $data, 1, 10, $row);
   }
 
@@ -602,7 +637,7 @@ if ($action eq "" or $action eq "help") {
   my $format = "   %1d %s | %2d:%02d  %3s  %3s | %2d:%02d  %3s  %3s | %2d:%02d  %3s  %3s | %2d:%02d  %3s  %3s\n";
   my @dow    = qw(Sun Mon Tue Wed Thu Fri Sat);
 
-  for my $zone (1..$zones) {
+  for my $zone (1..$zone_count) {
     for my $dow (0..$#dow) {
       my $idx = (7*($zone-1))+1 + $dow;
       my $row = $data->{"10.$idx"};
@@ -632,7 +667,7 @@ if ($action eq "" or $action eq "help") {
 
 } elsif ($action eq "set_schedule") {
 
-  my @zone_args    = multi_arg ("zone",    [1..$zones],                       1);
+  my @zone_args    = multi_arg ("zone",    [1..$zone_count],                  1);
   my @day_args     = multi_arg ("day",     [qw(sun mon tue wed thu fri sat)], 1);
   my @program_args = multi_arg ("program", [qw(wake day eve sleep)],          0);
 
