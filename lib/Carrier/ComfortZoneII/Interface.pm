@@ -322,13 +322,18 @@ sub get_status_data {
   $status->{effective_mode}   = $SYSTEM_MODE{$data{"1.12"}->[6]};
   $status->{outside_temp}     = $self->decode_temperature ($data{"9.3"}->[4], $data{"9.3"}->[5]);
   $status->{air_handler_temp} =  $data{"9.3"} ->[6];
-  $status->{defrosting}       = ($data{"9.3"} ->[8] || $data{"9.3"}->[9] || ($data{"9.5"}->[3] & 0x10)) ? 1 : 0;
+  $status->{reverse}          = ($data{"9.5"} ->[3]  & 0x10) ? 1 : 0;
   $status->{fan}              = ($data{"9.5"} ->[3]  & 0x20) ? 1 : 0;
-  $status->{heat}             = ($data{"9.5"} ->[3]  & 0x01) ? 1 : 0;
-  $status->{aux_heat}         = ($data{"9.5"} ->[3]  & 0x04) ? 1 : 0;
+  $status->{compressor_1}     = ($data{"9.5"} ->[3]  & 0x01) ? 1 : 0;
+  $status->{compressor_2}     = ($data{"9.5"} ->[3]  & 0x02) ? 1 : 0;
+  $status->{aux_heat_1}       = ($data{"9.5"} ->[3]  & 0x04) ? 1 : 0;
+  $status->{aux_heat_2}       = ($data{"9.5"} ->[3]  & 0x08) ? 1 : 0;
   $status->{zone1_humidity}   =  $data{"1.9"} ->[6];
   $status->{all_mode}         =  $data{"1.12"}->[15];
   $status->{fan_mode}         = ($data{"1.17"}->[3]  & 0x04) ? "Always On" : "Auto";
+
+  $status->{compressor}       = $status->{compressor_1} || $status->{compressor_2};
+  $status->{aux_heat}         = $status->{aux_heat_1}   || $status->{aux_heat_2};
 
   for my $zone (0..$self->{zones}-1) {
     my $bit = 1 << $zone;

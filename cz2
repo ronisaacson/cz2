@@ -497,20 +497,32 @@ if ($action eq "" or $action eq "help") {
 
   my $status    = $c->get_status_data;
 
-  my $fan_on    = $status->{fan}  ? "On" : "Off";
-  my $heat_on   = $status->{heat} ? "On" : "Off";
-
-  my $aux       = $status->{aux_heat}   ? " [AUX]"       : "";
-  my $defrost   = $status->{defrosting} ? ", Defrosting" : "";
-
   my $mode      = $status->{system_mode};
   my $effective = $status->{effective_mode};
   my $fan_mode  = $status->{fan_mode};
+  my $fan_on    = $status->{fan} ? "On" : "Off";
 
-  $mode .= " ($effective)" if ($mode eq "Auto");
+  my $is_auto   = $mode eq "Auto";
+  my $is_heat   = $effective =~ /Heat/;
+
+  $mode .= " ($effective)" if $is_auto;
+
+  my $active;
+  if ($status->{compressor}) {
+    if ($is_heat) {
+      $active  = $status->{reverse} ? "Defrosting" : "Heat On";
+      $active .= " [AUX HEAT]" if $status->{aux_heat};
+    } else {
+      $active  = "Cool On";
+    }
+  } elsif ($status->{aux_heat}) {
+    $active = "AUX Heat On";
+  } else {
+    $active = $is_heat ? "Heat Off" : "Cool Off";
+  }
 
   print "Ambient:     Outside $status->{outside_temp}° / Indoor humidity $status->{zone1_humidity}%\n";
-  print "Air Handler: $status->{air_handler_temp}°, Fan $fan_on, Heat $heat_on$aux$defrost\n";
+  print "Air Handler: $status->{air_handler_temp}°, Fan $fan_on, $active\n";
   print "Mode:        $mode, Fan $fan_mode\n";
   print "\n";
 
@@ -526,10 +538,16 @@ if ($action eq "" or $action eq "help") {
     my $cool = $zonedata->{out} ? "OUT" : sprintf "%2d°", $zonedata->{cool_setpoint};
     my $heat = $zonedata->{out} ? "OUT" : sprintf "%2d°", $zonedata->{heat_setpoint};
 
-    printf "%-${name_len}s Temperature %2d°, Damper %3s%%, Cool setpoint %s, Heat setpoint %s%s%s\n",
+    my $cool_msg = "Cool setpoint $cool";
+    my $heat_msg = "Heat setpoint $heat";
+    my $setpoint =
+      $is_auto ? "$cool_msg, $heat_msg" :
+      $is_heat ? $heat_msg : $cool_msg;
+
+    printf "%-${name_len}s Temperature %2d°, Damper %3s%%, %s%s%s\n",
       $zone_names[$zone-1] . ":",
       @{$status->{zones}->[$zone-1]}{qw(temperature damper_position)},
-      $cool, $heat,
+      $setpoint,
       $hold || $temp,
       $all;
   }
