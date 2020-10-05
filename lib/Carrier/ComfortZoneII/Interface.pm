@@ -26,6 +26,8 @@ our %SYSTEM_MODE =
    4 => "Off",
   );
 
+our @WEEKDAY = qw(Sun Mon Tue Wed Thu Fri Sat);
+
 ###############################################################################
 
 sub new {
@@ -306,7 +308,7 @@ sub get_status_data {
   #
   my ($self) = @_;
 
-  my @queries = qw(9.3 9.4 9.5 1.9 1.12 1.16 1.17 1.24);
+  my @queries = qw(9.3 9.4 9.5 1.9 1.12 1.16 1.17 1.18 1.24);
   my %data;
 
   for my $query (@queries) {
@@ -333,8 +335,19 @@ sub get_status_data {
      raw  => $raw,
     };
 
+  my ($ampm, $day, $hour, $min, $sec) = ("am", @{$data{"1.18"}}[3..6]);
+  if ($hour == 0) {
+    $hour  = 12;
+  } elsif ($hour >= 12) {
+    $ampm  = "pm";
+    $hour -= 12 if $hour > 12;
+  }
+
+  my $system_time = sprintf "%s %02d:%02d%s", $WEEKDAY[$day], $hour, $min, $ampm;
+
   $status->{system_mode}      = $SYSTEM_MODE{$data{"1.12"}->[4]};
   $status->{effective_mode}   = $SYSTEM_MODE{$data{"1.12"}->[6]};
+  $status->{system_time}      = $system_time;
   $status->{outside_temp}     = $self->decode_temperature ($data{"9.3"}->[4], $data{"9.3"}->[5]);
   $status->{air_handler_temp} =  $data{"9.3"} ->[6];
   $status->{reverse}          = ($data{"9.5"} ->[3]  & 0x10) ? 1 : 0;

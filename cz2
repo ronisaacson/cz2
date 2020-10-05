@@ -104,6 +104,12 @@ HIGH-LEVEL COMMANDS
     apply to all zones and the settings for the other zones will be
     ignored.
 
+  set_time <date> <time>
+
+    Set the current system time. The first parameter is a day
+    abbreviation (e.g. Mon) and the second parameter is a time in
+    either 12-hour (3:00pm) or 24-hour (15:00) format.
+
   show_schedules
 
     Print a chart of all of the programmed schedules, including start
@@ -219,6 +225,34 @@ sub dtr_args {
   return ($dest, $table, $row);
 }
 
+sub parse_time {
+  my ($value) = @_;
+
+  $value =~ /^(\d?\d):(\d\d)([ap]m)?$/i
+    or return;
+
+  my $hour   = $1 + 0;
+  my $minute = $2 + 0;
+  my $ampm   = $3;
+
+  $hour += 12 if ($ampm =~ /p/i and $hour <  12);
+  $hour -= 12 if ($ampm =~ /a/i and $hour == 12);
+
+  ($hour   >= 0 and $hour   <= 23) or return;
+  ($minute >= 0 and $minute <= 59) or return;
+
+  my $time = [$hour, $minute];
+
+  if    ($hour ==  0) { $hour  = 12; $ampm  = "am"; }
+  elsif ($hour == 12) {              $ampm  = "pm"; }
+  elsif ($hour >  12) { $hour -= 12; $ampm  = "pm"; }
+  else                {              $ampm  = "am"; }
+
+  push @$time, sprintf "%d:%02d%s", $hour, $minute, $ampm;
+
+  return $time;
+}
+
 sub kv_args {
   #
   # Parse key=value style arguments.
@@ -257,29 +291,8 @@ sub kv_args {
 
     } elsif ($check eq "time") {
 
-      $value =~ /^(\d?\d):(\d\d)([ap]m)?$/i
+      $args->{$key} = parse_time ($value)
         or die "Invalid value for parameter '$key'\n";
-
-      my $hour   = $1 + 0;
-      my $minute = $2 + 0;
-      my $ampm   = $3;
-
-      $hour += 12 if ($ampm =~ /p/i and $hour <  12);
-      $hour -= 12 if ($ampm =~ /a/i and $hour == 12);
-
-      ($hour   >= 0 and $hour   <= 23) or die "Invalid value for parameter '$key'\n";
-      ($minute >= 0 and $minute <= 59) or die "Invalid value for parameter '$key'\n";
-
-      my $arg = [$hour, $minute];
-
-      if    ($hour ==  0) { $hour  = 12; $ampm  = "am"; }
-      elsif ($hour == 12) {              $ampm  = "pm"; }
-      elsif ($hour >  12) { $hour -= 12; $ampm  = "pm"; }
-      else                {              $ampm  = "am"; }
-
-      push @$arg, sprintf "%d:%02d%s", $hour, $minute, $ampm;
-
-      $args->{$key} = $arg;
 
     } else {
 
@@ -526,6 +539,7 @@ if ($action eq "" or $action eq "help") {
     $active = $is_heat ? "Heat Off" : "Cool Off";
   }
 
+  print "System Time: $status->{system_time}\n";
   print "Ambient:     Outside $status->{outside_temp}° / Indoor humidity $status->{zone1_humidity}%\n";
   print "Air Handler: $status->{air_handler_temp}°, Fan $fan_on, $active\n";
   print "Mode:        $mode, Fan $fan_mode\n";
@@ -651,6 +665,31 @@ if ($action eq "" or $action eq "help") {
 
     }
   }
+
+  write_all ($c, 1, $data);
+  print "Ok\n";
+
+} elsif ($action eq "set_time") {
+
+  my @days = qw(sun mon tue wed thu fri sat);
+  my %days = map { $days[$_] => $_ } (0..$#days);
+
+  my $day_arg  = shift;
+  my $time_arg = shift;
+
+  my $day = $days{lc $day_arg};
+  defined $day
+    or die "Invalid day\n";
+
+  my $time = parse_time ($time_arg)
+    or die "Invalid time\n";
+
+  check_no_more_args;
+
+  my $data =
+    {
+     "1.18" => [0, 1, 18, $day, $time->[0], $time->[1], 0],
+    };
 
   write_all ($c, 1, $data);
   print "Ok\n";
