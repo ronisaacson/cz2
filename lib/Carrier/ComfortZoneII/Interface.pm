@@ -306,16 +306,36 @@ sub get_status_data {
   # Build a data structure that reflects the overall current status of
   # the system with all known values.
   #
-  my ($self) = @_;
+  my ($self, $raw_input) = @_;
 
   my @queries = qw(9.3 9.4 9.5 1.9 1.12 1.16 1.17 1.18 1.24);
   my %data;
 
-  for my $query (@queries) {
-    my ($table, $row) = split /\./, $query;
+  if ($raw_input) {
 
-    my $f = $self->send_with_reply ($table, "read", 0, $table, $row);
-    $data{$query} = $f->{data};
+    my @frames = $self->decode_raw ($raw_input);
+
+    for my $frame (@frames) {
+      my $data = $frame->{data};
+      my $key  = join ".", $data->[1], $data->[2];
+
+      $data{$key} = $data;
+    }
+
+    for my $key (@queries) {
+      exists $data{$key}
+        or die "Incomplete raw input (missing data for $key)\n";
+    }
+
+  } else {
+
+    for my $query (@queries) {
+      my ($table, $row) = split /\./, $query;
+
+      my $f = $self->send_with_reply ($table, "read", 0, $table, $row);
+      $data{$query} = $f->{data};
+    }
+
   }
 
   my @raw;

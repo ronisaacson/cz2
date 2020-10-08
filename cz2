@@ -201,6 +201,12 @@ LOW-LEVEL COMMANDS
 
     Decode the "raw" value in the status_data output, and use it to
     print a dump in the same format as read_all.
+
+  status_from_raw <data>
+
+    Decode the "raw" value in the status_data output, and use it as
+    input to the "status" command. This can be used to redisplay the
+    human-readable status from a saved snapshot.
 USAGE
 
 sub check_numeric {
@@ -509,11 +515,17 @@ if ($action eq "" or $action eq "help") {
     print "No changes needed\n";
   }
 
-} elsif ($action eq "status") {
+} elsif ($action =~ /^status(_from_raw)?$/) {
+
+  my $raw;
+  if ($1) {
+    $raw = shift
+      or die "Missing argument\n";
+  }
 
   check_no_more_args;
 
-  my $status    = $c->get_status_data;
+  my $status    = $c->get_status_data ($raw);
 
   my $mode      = $status->{system_mode};
   my $effective = $status->{effective_mode};
@@ -581,7 +593,9 @@ if ($action eq "" or $action eq "help") {
 
 } elsif ($action eq "decode_raw") {
 
-  my $raw = shift;
+  my $raw = shift
+    or die "Missing argument\n";
+
   check_no_more_args;
 
   my @frames = $c->decode_raw ($raw);
