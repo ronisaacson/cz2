@@ -395,13 +395,13 @@ sub get_status_data {
     $zones[$zone]->{out}             = $data{"1.12"}->[12] & $bit;
   }
 
-  if ($status->{all_mode}) {
-    for my $zone (1..$self->{zones}-1) {
-      $zones[$zone]->{cool_setpoint} = $zones[0]->{cool_setpoint};
-      $zones[$zone]->{heat_setpoint} = $zones[0]->{heat_setpoint};
-      $zones[$zone]->{temporary}     = $zones[0]->{temporary};
-      $zones[$zone]->{hold}          = $zones[0]->{hold};
-      $zones[$zone]->{out}           = $zones[0]->{out};
+  if (my $all = $status->{all_mode}) {
+    for my $zone (0..$self->{zones}-1) {
+      $zones[$zone]->{cool_setpoint} = $zones[$all-1]->{cool_setpoint};
+      $zones[$zone]->{heat_setpoint} = $zones[$all-1]->{heat_setpoint};
+      $zones[$zone]->{temporary}     = $zones[$all-1]->{temporary};
+      $zones[$zone]->{hold}          = $zones[$all-1]->{hold};
+      $zones[$zone]->{out}           = $zones[$all-1]->{out};
     }
   }
 

@@ -529,6 +529,7 @@ if ($action eq "" or $action eq "help") {
 
   my $mode      = $status->{system_mode};
   my $effective = $status->{effective_mode};
+  my $all_mode  = $status->{all_mode};
   my $fan_mode  = $status->{fan_mode};
   my $fan_on    = $status->{fan} ? "On" : "Off";
 
@@ -562,9 +563,9 @@ if ($action eq "" or $action eq "help") {
   for my $zone (1..$zone_count) {
     my $zonedata = $status->{zones}->[$zone-1];
 
-    my $all  = ($zone == 1 and $status->{all_mode}) ? " [ALL]"  : "";
-    my $temp = $zonedata->{temporary}               ? " [TEMP]" : "";
-    my $hold = $zonedata->{hold}                    ? " [HOLD]" : "";
+    my $all  = ($zone == $all_mode)   ? " [ALL]"  : "";
+    my $temp = $zonedata->{temporary} ? " [TEMP]" : "";
+    my $hold = $zonedata->{hold}      ? " [HOLD]" : "";
 
     my $cool = $zonedata->{out} ? "OUT" : sprintf "%2d°", $zonedata->{cool_setpoint};
     my $heat = $zonedata->{out} ? "OUT" : sprintf "%2d°", $zonedata->{heat_setpoint};
