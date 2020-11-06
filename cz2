@@ -9,6 +9,7 @@ use Carrier::ComfortZoneII::Interface;
 use IO::File;
 use IO::Socket::IP;
 use JSON;
+use POSIX qw(strftime);
 
 ###############################################################################
 
@@ -52,6 +53,9 @@ if ($zones =~ /^\d+$/) {
 }
 
 ###############################################################################
+
+my @now = localtime (time);
+my $now = strftime  ("%a %I:%M%P", @now);
 
 my $usage = <<USAGE;
 Usage: $0
@@ -109,6 +113,11 @@ HIGH-LEVEL COMMANDS
     Set the current system time. The first parameter is a day
     abbreviation (e.g. Mon) and the second parameter is a time in
     either 12-hour (3:00pm) or 24-hour (15:00) format.
+
+  sync_time
+
+    Set the current system time to the local time from this host
+    (currently: $now).
 
   show_schedules
 
@@ -704,6 +713,24 @@ if ($action eq "" or $action eq "help") {
   my $data =
     {
      "1.18" => [0, 1, 18, $day, $time->[0], $time->[1], 0],
+    };
+
+  write_all ($c, 1, $data);
+  print "Ok\n";
+
+} elsif ($action eq "sync_time") {
+
+  check_no_more_args;
+
+  my @now  = localtime (time);
+  my $day  = $now[6];
+  my $hour = $now[2];
+  my $min  = $now[1];
+  my $sec  = $now[0];
+
+  my $data =
+    {
+     "1.18" => [0, 1, 18, $day, $hour, $min, $sec],
     };
 
   write_all ($c, 1, $data);
