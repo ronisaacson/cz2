@@ -376,7 +376,7 @@ sub get_status_data {
   $status->{compressor_2}     = ($data{"9.5"} ->[3]  & 0x02) ? 1 : 0;
   $status->{aux_heat_1}       = ($data{"9.5"} ->[3]  & 0x04) ? 1 : 0;
   $status->{aux_heat_2}       = ($data{"9.5"} ->[3]  & 0x08) ? 1 : 0;
-  $status->{zone1_humidity}   =  $data{"1.9"} ->[6];
+  $status->{zone1_humidity}   =  $data{"1.9"} ->[4];
   $status->{all_mode}         =  $data{"1.12"}->[15];
   $status->{fan_mode}         = ($data{"1.17"}->[3]  & 0x04) ? "Always On" : "Auto";
 
