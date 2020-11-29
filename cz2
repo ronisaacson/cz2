@@ -16,6 +16,7 @@ use POSIX qw(strftime);
 my $config  = $ENV{CZ2_CONFIG} || "$ENV{HOME}/.cz2";
 my $connect = $ENV{CZ2_CONNECT};
 my $zones   = $ENV{CZ2_ZONES};
+my $id      = $ENV{CZ2_ID};
 
 unless ($connect and $zones) {
   my $CONFIG = IO::File->new ($config)
@@ -33,6 +34,7 @@ unless ($connect and $zones) {
 
     if    ($var eq "connect") { $connect ||= $val }
     elsif ($var eq "zones")   { $zones   ||= $val }
+    elsif ($var eq "id")      { $id      ||= $val }
     else  { die "Invalid parameter '$var' at $config line $.\n"; }
   }
 }
@@ -407,12 +409,15 @@ sub write_all {
 ###############################################################################
 
 my $action = shift;
-
-my $c = Carrier::ComfortZoneII::Interface->new
+my %params =
   (
    connect => $connect,
    zones   => $zone_count,
   );
+
+$params{id} = $id if defined $id;
+
+my $c = Carrier::ComfortZoneII::Interface->new (%params);
 
 ###############################################################################
 

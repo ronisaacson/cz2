@@ -27,8 +27,9 @@ You'll need the following non-core perl modules:
 ## Configuration
 
 The `cz2` script has two parameters which must be configured for your
-installation. The preferred method of configuration is to create a
-file called `$HOME/.cz2` with the following syntax:
+installation, and one optional parameter. The preferred method of
+configuration is to create a file called `$HOME/.cz2` with the
+following syntax:
 
     # Configuration file for cz2
     
@@ -43,11 +44,18 @@ file called `$HOME/.cz2` with the following syntax:
     #
     zones = First Floor, Second Floor, Basement
 
+    # Device ID number to use on the serial bus. This must be unique.
+    # OPTIONAL (defaults to 99) and you shouldn't need to change this
+    # unless you're running multiple instances of this script.
+    #
+    # id = 99
+
 The following environment variables are also available:
 
 * `CZ2_CONFIG`: Alternate path to configuration file
 * `CZ2_CONNECT`: Overrides the `connect` parameter
 * `CZ2_ZONES`: Overrides the `zones` parameter
+* `CZ2_ID`: Overrides the `id` parameter
 
 If both the `CZ2_CONNECT` and `CZ2_ZONES` environment variables are
 supplied, then the script won't attempt to read the configuration
