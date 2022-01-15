@@ -298,7 +298,9 @@ sub decode_temperature {
   #
   my ($self, $high, $low) = @_;
 
-  sprintf "%d", ((($high << 8) + $low) / 16);
+  my $temp = sprintf "%d", ((($high << 8) + $low) / 16);
+
+  return ($high <= 128 ? $temp : $temp - 4096);
 }
 
 sub get_status_data {
